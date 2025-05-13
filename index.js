@@ -9,6 +9,9 @@ app.use(express.json());
 const API_KEY = 'xlogsga5-8jha-ch20-l4re-nqd4k9fphxxh';
 const API_URL = 'https://api.trackingmore.com/v4/trackings';
 
+// Healthcheck oder Debug-Route
+app.get('/', (req, res) => res.send('🟢 Proxy läuft'));
+
 // 🔍 Carrier automatisch erkennen
 app.get('/detect', async (req, res) => {
   const tracking_number = req.query.tnr;
@@ -63,7 +66,8 @@ app.get('/track', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
+// ❗ Render verlangt explizit process.env.PORT – ohne Fallback!
+const PORT = process.env.PORT;
 app.listen(PORT, () => {
-  console.log(`Proxy läuft auf Port ${PORT}`);
+  console.log(`✅ Tracking proxy läuft auf Port ${PORT}`);
 });
