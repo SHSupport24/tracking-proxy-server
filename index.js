@@ -73,7 +73,6 @@ app.get('/track', async (req, res) => {
         return res.status(500).json({ error: 'Tracking konnte nicht angelegt werden.' });
       }
 
-      // Retry bis zu 3x mit 8s Delay
       for (let i = 0; i < 3; i++) {
         console.log(`🔁 Warteversuch ${i + 1}/3...`);
         await new Promise(r => setTimeout(r, 8000));
@@ -84,7 +83,7 @@ app.get('/track', async (req, res) => {
 
     return res.json({ status: status || 'Kein Status verfügbar' });
   } catch (err) {
-    console.error('❌ Proxy-Fehler:', err.message);
+    console.error('❌ Proxy-Fehler (Detail):', err.response?.data || err.message);
     return res.status(500).json({ error: 'Proxy-Fehler. Siehe Logs.' });
   }
 });
