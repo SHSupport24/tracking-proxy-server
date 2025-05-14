@@ -15,7 +15,6 @@ const API_URL = 'https://api.trackingmore.com/v4/trackings';
 
 app.get('/', (req, res) => res.send('🟢 Proxy läuft'));
 
-// Carrier-Erkennung (wird aktuell nicht verwendet, aber bleibt drin)
 app.get('/detect', async (req, res) => {
   const tracking_number = req.query.tnr;
   if (!tracking_number) return res.status(400).json({ error: 'Trackingnummer fehlt.' });
@@ -38,7 +37,6 @@ app.get('/detect', async (req, res) => {
   }
 });
 
-// DHL-Tracking: GET bevorzugt, POST als Fallback
 app.get('/track', async (req, res) => {
   const tracking_number = req.query.tnr;
   const carrier_code = req.query.carrier;
@@ -56,21 +54,29 @@ app.get('/track', async (req, res) => {
   const postUrl = API_URL;
 
   try {
-    // 1. GET versuchen
     const response = await axios.get(getUrl, { headers });
-    const status = response.data?.data?.tag || 'Unbekannt';
+    console.log('Antwort GET:', response.data);
+
+    const checkpoints = response.data?.data?.origin_info?.trackinfo;
+    const lastMessage = checkpoints?.[checkpoints.length - 1]?.StatusDescription;
+
+    const status = lastMessage || response.data?.data?.tag || 'Kein Status verfügbar';
     return res.json({ status });
   } catch (getError) {
     console.error('Fehler bei GET:', getError.response?.data || getError.message);
 
-    // 2. Fallback POST
     try {
       const response = await axios.post(postUrl, {
         tracking_number,
         carrier_code
       }, { headers });
 
-      const status = response.data?.data?.tag || 'Unbekannt';
+      console.log('Antwort POST:', response.data);
+
+      const checkpoints = response.data?.data?.origin_info?.trackinfo;
+      const lastMessage = checkpoints?.[checkpoints.length - 1]?.StatusDescription;
+
+      const status = lastMessage || response.data?.data?.tag || 'Kein Status verfügbar';
       return res.json({ status });
     } catch (postError) {
       console.error('Fehler bei POST:', postError.response?.data || postError.message);
