@@ -1,3 +1,4 @@
+// === index.js (Proxy Server) ===
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -6,7 +7,7 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-const API_KEY = 'asat_0eae2906dc2f4067a2e7f1b1139896a8'; // 🔒 Dein AfterShip API-Key
+const API_KEY = 'asat_0eae2906dc2f4067a2e7f1b1139896a8';
 const API_URL = 'https://api.aftership.com/v4/trackings';
 
 app.get('/', (req, res) => res.send('🟢 AfterShip Proxy läuft'));
@@ -73,15 +74,34 @@ app.get('/track', async (req, res) => {
         return res.status(500).json({ error: 'Tracking konnte nicht angelegt werden.' });
       }
 
-      await new Promise(r => setTimeout(r, 3000)); // Warten für Sync
+      await new Promise(r => setTimeout(r, 3000));
       status = await getTracking(tracking_number, carrier_code, headers);
     }
 
     return res.json({ status: status || 'Kein Status verfügbar' });
-
   } catch (err) {
     console.error('❌ Proxy-Fehler:', err.message);
     return res.status(500).json({ error: 'Proxy-Fehler. Siehe Logs.' });
+  }
+});
+
+app.get('/raw', async (req, res) => {
+  const { tnr: tracking_number, carrier: carrier_code } = req.query;
+
+  if (!tracking_number || !carrier_code) {
+    return res.status(400).json({ error: 'Fehlende Parameter.' });
+  }
+
+  const headers = {
+    'aftership-api-key': API_KEY,
+    'Content-Type': 'application/json'
+  };
+
+  try {
+    const response = await axios.get(`${API_URL}/${carrier_code}/${tracking_number}`, { headers });
+    res.json(response.data);
+  } catch (err) {
+    res.status(500).json({ error: err.response?.data || err.message });
   }
 });
 
