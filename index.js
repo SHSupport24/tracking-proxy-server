@@ -1,104 +1,119 @@
-var PROXY_BASE = 'https://your-proxy-server.com'; // Replace with your actual proxy server URL
-var CARRIER_CODE = 'dhl';
+const express = require('express');
+const cors = require('cors');
+const axios = require('axios');
 
-function extractTrackingNumber(card) {
-  // Example: extract tracking number from card name or description
-  return card.name.match(/\b\d{10,}\b/)?.[0] || null;
+const app = express();
+app.use(cors({ origin: '*' }));
+app.use(express.json());
+
+const API_KEY = 'asat_0eae2906dc2f4067a2e7f1b1139896a8';
+const API_URL = 'https://api.aftership.com/v4/trackings';
+
+app.get('/', (req, res) => res.send('🟢 AfterShip Proxy läuft'));
+
+function extractStatus(data) {
+  return (
+    data?.tracking?.tag ||
+    data?.tracking?.subtag_message ||
+    data?.tracking?.checkpoints?.slice(-1)?.[0]?.message ||
+    'Kein Status verfügbar'
+  );
 }
 
-function fetchTrackingStatus(tnr, carrier) {
-  return fetch(`${PROXY_BASE}/track?tnr=${tnr}&carrier=${carrier}`)
-    .then(response => {
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
+async function registerTracking(tracking_number, carrier_code, headers) {
+  try {
+    const res = await axios.post(API_URL, {
+      tracking: {
+        tracking_number,
+        slug: carrier_code
       }
-      return response.json();
-    })
-    .then(data => data.status || 'unknown');
-}
-
-function showTrackingStatus(t, options) {
-  return t.card('name')
-    .then(card => {
-      var tnr = extractTrackingNumber(card);
-      if (!tnr) {
-        return t.popup({
-          title: 'Tracking Status',
-          url: './no-tracking.html'
-        });
-      }
-      return fetchTrackingStatus(tnr, CARRIER_CODE)
-        .then(status => {
-          return t.popup({
-            title: 'Tracking Status',
-            url: './status.html',
-            args: { status: status }
-          });
-        })
-        .catch(() => {
-          return t.popup({
-            title: 'Tracking Status',
-            url: './error.html'
-          });
-        });
-    });
-}
-
-function openDebugModal(t) {
-  return t.card('name')
-    .then(card => {
-      var tnr = extractTrackingNumber(card);
-      if (!tnr) {
-        return t.popup({
-          title: 'Debug Info',
-          url: './no-tracking.html'
-        });
-      }
-      return fetch(`${PROXY_BASE}/raw?tnr=${tnr}&carrier=${CARRIER_CODE}`)
-        .then(response => response.json())
-        .then(data => {
-          return t.modal({
-            title: 'Debug Information',
-            url: './debug.html',
-            args: { data: data }
-          });
-        })
-        .catch(() => {
-          return t.popup({
-            title: 'Debug Info',
-            url: './error.html'
-          });
-        });
-    });
-}
-
-TrelloPowerUp.initialize({
-  'card-buttons': function(t, options) {
-    return [{
-      icon: 'https://cdn.iconscout.com/icon/free/png-256/shipping-box-143-461988.png',
-      text: 'Tracking-Status anzeigen',
-      callback: showTrackingStatus
-    }, {
-      icon: 'https://cdn.iconscout.com/icon/free/png-256/debug-1768076-1502407.png',
-      text: 'Debug',
-      callback: openDebugModal
-    }];
-  },
-
-  'card-badges': function(t, options) {
-    return t.card('name')
-      .then(card => {
-        var tnr = extractTrackingNumber(card);
-        if (!tnr) {
-          return [];
-        }
-        return fetchTrackingStatus(tnr, CARRIER_CODE)
-          .then(status => [{
-            text: status,
-            color: status === 'delivered' ? 'green' : 'yellow',
-            refresh: 10
-          }])
-          .catch(() => []);
-      });
+    }, { headers });
+    console.log('✅ Tracking registriert:', res.data);
+    return true;
+  } catch (err) {
+    console.error('❌ POST fehlgeschlagen:', err.response?.data || err.message);
+    return false;
   }
+}
+
+async function getTracking(tracking_number, carrier_code, headers) {
+  try {
+    const res = await axios.get(`${API_URL}/${carrier_code}/${tracking_number}`, { headers });
+    console.log('🔄 GET Trackingdaten:', JSON.stringify(res.data, null, 2));
+    return extractStatus(res.data.data);
+  } catch (err) {
+    const code = err.response?.data?.meta?.code;
+    if (code === 4004) {
+      console.warn('⚠️ Tracking nicht vorhanden (4004)');
+      return null;
+    }
+    console.error('❌ GET fehlgeschlagen:', err.response?.data || err.message);
+    throw err;
+  }
+}
+
+app.get('/track', async (req, res) => {
+  const { tnr: tracking_number, carrier: carrier_code } = req.query;
+
+  if (!tracking_number || !carrier_code) {
+    return res.status(400).json({ error: 'Trackingnummer oder Carrier fehlt.' });
+  }
+
+  const headers = {
+    'aftership-api-key': API_KEY,
+    'Content-Type': 'application/json'
+  };
+
+  try {
+    let status = await getTracking(tracking_number, carrier_code, headers);
+
+    if (status === null) {
+      const created = await registerTracking(tracking_number, carrier_code, headers);
+      if (!created) {
+        return res.status(500).json({ error: 'Tracking konnte nicht angelegt werden.' });
+      }
+
+      // Retry bis zu 3x mit 8s Delay
+      for (let i = 0; i < 3; i++) {
+        console.log(`🔁 Warteversuch ${i + 1}/3...`);
+        await new Promise(r => setTimeout(r, 8000));
+        status = await getTracking(tracking_number, carrier_code, headers);
+        if (status !== null) break;
+      }
+    }
+
+    return res.json({ status: status || 'Kein Status verfügbar' });
+  } catch (err) {
+    console.error('❌ Proxy-Fehler:', err.message);
+    return res.status(500).json({ error: 'Proxy-Fehler. Siehe Logs.' });
+  }
+});
+
+app.get('/raw', async (req, res) => {
+  const { tnr: tracking_number, carrier: carrier_code } = req.query;
+
+  if (!tracking_number || !carrier_code) {
+    return res.status(400).json({ error: 'Fehlende Parameter.' });
+  }
+
+  const headers = {
+    'aftership-api-key': API_KEY,
+    'Content-Type': 'application/json'
+  };
+
+  try {
+    const response = await axios.get(`${API_URL}/${carrier_code}/${tracking_number}`, { headers });
+    res.json(response.data);
+  } catch (err) {
+    const errData = err.response?.data?.meta;
+    if (errData?.code === 4004) {
+      return res.status(200).json({ status: 'Unbekannt', error: errData });
+    }
+    res.status(500).json({ error: errData || err.message });
+  }
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`✅ AfterShip-Proxy läuft auf Port ${PORT}`);
 });
