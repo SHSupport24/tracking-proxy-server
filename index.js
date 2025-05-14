@@ -1,143 +1,168 @@
-const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
+var PROXY_BASE = 'http://localhost:10000';
+var CARRIER_CODE = 'dhl';
 
-const app = express();
-app.use(cors({ origin: '*' }));
-app.use(express.json());
-
-const API_KEY = 'asat_0eae2906dc2f4067a2e7f1b1139896a8';
-const API_URL = 'https://api.aftership.com/v4/trackings';
-
-app.get('/', (req, res) => res.send('🟢 AfterShip Proxy läuft'));
-
-function extractStatus(data) {
-  return (
-    data?.tracking?.tag ||
-    data?.tracking?.subtag_message ||
-    data?.tracking?.checkpoints?.slice(-1)?.[0]?.message ||
-    'Kein Status verfügbar'
-  );
+function extractTrackingNumber(card) {
+  var regex = /(\b\d{10,20}\b)/g;
+  var match = regex.exec(card.name);
+  if (match) {
+    return match[1];
+  }
+  return null;
 }
 
-async function registerTracking(tracking_number, carrier_code, headers) {
-  try {
-    const res = await axios.post(API_URL, {
-      tracking: {
-        tracking_number,
-        slug: carrier_code
+function fetchTrackingStatus(tnr, callback) {
+  var url = PROXY_BASE + '/track?tnr=' + encodeURIComponent(tnr) + '&carrier=' + CARRIER_CODE;
+  fetch(url)
+    .then(function(response) {
+      if (!response.ok) {
+        throw new Error('Netzwerkantwort war nicht ok');
       }
-    }, { headers });
-    console.log('✅ Tracking registriert:', res.data);
-    await new Promise(r => setTimeout(r, 3000)); // 3 Sekunden warten nach POST
-    return true;
-  } catch (err) {
-    console.error('❌ POST fehlgeschlagen:', err.response?.data || err.message);
-    return false;
-  }
+      return response.json();
+    })
+    .then(function(data) {
+      callback(null, data.status);
+    })
+    .catch(function(error) {
+      callback(error, null);
+    });
 }
 
-async function getTracking(tracking_number, carrier_code, headers) {
-  try {
-    const res = await axios.get(`${API_URL}/${carrier_code}/${tracking_number}`, { headers });
-    console.log('🔄 GET Trackingdaten:', JSON.stringify(res.data, null, 2));
-    return extractStatus(res.data.data);
-  } catch (err) {
-    const code = err.response?.data?.meta?.code;
-    if (code === 4004) {
-      console.warn('⚠️ Tracking nicht vorhanden (4004)');
-      return null;
-    }
-    console.error('❌ GET fehlgeschlagen:', err.response?.data || err.message);
-    throw err;
-  }
-}
+function showTrackingStatus(t, options) {
+  var card = options.card;
+  var trackingNumber = extractTrackingNumber(card);
 
-app.get('/track', async (req, res) => {
-  const { tnr: tracking_number, carrier: carrier_code } = req.query;
-
-  if (!tracking_number || !carrier_code) {
-    return res.status(400).json({ error: 'Trackingnummer oder Carrier fehlt.' });
-  }
-
-  const headers = {
-    'aftership-api-key': API_KEY,
-    'Content-Type': 'application/json'
-  };
-
-  try {
-    let status = await getTracking(tracking_number, carrier_code, headers);
-
-    if (status === null) {
-      const created = await registerTracking(tracking_number, carrier_code, headers);
-      if (!created) {
-        return res.status(500).json({ error: 'Tracking konnte nicht angelegt werden.' });
-      }
-
-      await new Promise(r => setTimeout(r, 10000)); // 10 Sekunden warten
-      status = await getTracking(tracking_number, carrier_code, headers);
-    }
-
-    return res.json({ status: status || 'Kein Status verfügbar' });
-  } catch (err) {
-    // Falls 4004 im Fehler auftritt, versuchen wir POST und nochmal GET
-    const code = err.response?.data?.meta?.code;
-    if (code === 4004) {
-      try {
-        const created = await registerTracking(tracking_number, carrier_code, {
-          'aftership-api-key': API_KEY,
-          'Content-Type': 'application/json'
-        });
-        if (created) {
-          await new Promise(r => setTimeout(r, 10000)); // 10 Sekunden warten
-          const status = await getTracking(tracking_number, carrier_code, headers);
-          return res.json({ status: status || 'Kein Status verfügbar' });
+  if (!trackingNumber) {
+    t.popup({
+      title: 'Tracking-Status',
+      items: [
+        {
+          text: 'Keine gültige Trackingnummer gefunden.',
+          callback: function() {
+            t.closePopup();
+          }
         }
-      } catch (e) {
-        console.error('❌ Fehler beim erneuten POST/GET nach 4004:', e.message);
-      }
+      ]
+    });
+    return;
+  }
+
+  fetchTrackingStatus(trackingNumber, function(err, status) {
+    if (err) {
+      t.popup({
+        title: 'Tracking-Status',
+        items: [
+          {
+            text: 'Fehler beim Abrufen des Status: ' + err.message,
+            callback: function() {
+              t.closePopup();
+            }
+          }
+        ]
+      });
+      return;
     }
-    console.error('❌ Proxy-Fehler:', err.message);
-    return res.status(500).json({ error: 'Proxy-Fehler. Siehe Logs.' });
-  }
-});
 
-app.get('/raw', async (req, res) => {
-  const { tnr: tracking_number, carrier: carrier_code } = req.query;
-
-  if (!tracking_number || !carrier_code) {
-    return res.status(400).json({ error: 'Fehlende Parameter.' });
-  }
-
-  const headers = {
-    'aftership-api-key': API_KEY,
-    'Content-Type': 'application/json'
-  };
-
-  try {
-    const response = await axios.get(`${API_URL}/${carrier_code}/${tracking_number}`, { headers });
-    res.json(response.data);
-  } catch (err) {
-    const errData = err.response?.data?.meta;
-    if (errData?.code === 4004) {
-      // Versuche POST und danach nochmal GET
-      try {
-        const created = await registerTracking(tracking_number, carrier_code, headers);
-        if (created) {
-          await new Promise(r => setTimeout(r, 10000)); // 10 Sekunden warten
-          const responseRetry = await axios.get(`${API_URL}/${carrier_code}/${tracking_number}`, { headers });
-          return res.json(responseRetry.data);
+    t.popup({
+      title: 'Tracking-Status',
+      items: [
+        {
+          text: 'Trackingnummer: ' + trackingNumber,
+          callback: function() {
+            t.closePopup();
+          }
+        },
+        {
+          text: 'Status: ' + status,
+          callback: function() {
+            t.closePopup();
+          }
+        },
+        {
+          text: 'Debug-Info anzeigen',
+          callback: function() {
+            openDebugModal(t, trackingNumber);
+          }
         }
-      } catch (e) {
-        console.error('❌ Fehler beim POST/GET Retry nach 4004:', e.message);
-      }
-      return res.status(200).json({ status: 'Unbekannt', error: errData });
-    }
-    res.status(500).json({ error: errData || err.message });
-  }
-});
+      ]
+    });
+  });
+}
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`✅ AfterShip-Proxy läuft auf Port ${PORT}`);
+function openDebugModal(t, trackingNumber) {
+  var url = PROXY_BASE + '/raw?tnr=' + encodeURIComponent(trackingNumber) + '&carrier=' + CARRIER_CODE;
+  fetch(url)
+    .then(function(response) {
+      if (!response.ok) {
+        throw new Error('Netzwerkantwort war nicht ok');
+      }
+      return response.json();
+    })
+    .then(function(data) {
+      t.modal({
+        url: './debug.html',
+        args: { data: data },
+        height: 500,
+        fullscreen: false
+      });
+    })
+    .catch(function(error) {
+      t.popup({
+        title: 'Debug-Info',
+        items: [
+          {
+            text: 'Fehler beim Abrufen der Debug-Info: ' + error.message,
+            callback: function() {
+              t.closePopup();
+            }
+          }
+        ]
+      });
+    });
+}
+
+TrelloPowerUp.initialize({
+  'card-badges': function(t, options) {
+    var card = options.card;
+    var trackingNumber = extractTrackingNumber(card);
+    if (!trackingNumber) {
+      return [];
+    }
+
+    return t.get('card', 'shared', 'trackingStatus')
+      .then(function(status) {
+        if (!status) {
+          // Try to fetch status if not cached yet
+          return new Promise(function(resolve) {
+            fetchTrackingStatus(trackingNumber, function(err, fetchedStatus) {
+              if (!err && fetchedStatus) {
+                t.set('card', 'shared', 'trackingStatus', fetchedStatus);
+                resolve([
+                  {
+                    text: fetchedStatus,
+                    color: fetchedStatus.toLowerCase().includes('delivered') ? 'green' : 'yellow'
+                  }
+                ]);
+              } else {
+                resolve([]);
+              }
+            });
+          });
+        }
+        return [
+          {
+            text: status,
+            color: status.toLowerCase().includes('delivered') ? 'green' : 'yellow'
+          }
+        ];
+      });
+  },
+  'card-buttons': function(t, options) {
+    return [{
+      icon: 'https://cdn-icons-png.flaticon.com/512/61/61456.png',
+      text: 'Tracking-Status',
+      callback: function(t) {
+        return showTrackingStatus(t, options);
+      }
+    }];
+  }
 });
