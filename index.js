@@ -1,4 +1,3 @@
-// === index.js (Proxy Server) ===
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -74,7 +73,7 @@ app.get('/track', async (req, res) => {
         return res.status(500).json({ error: 'Tracking konnte nicht angelegt werden.' });
       }
 
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 10000)); // verlängert auf 10 Sekunden
       status = await getTracking(tracking_number, carrier_code, headers);
     }
 
