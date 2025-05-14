@@ -3,22 +3,22 @@ const cors = require('cors');
 const axios = require('axios');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Tracking-Api-Key']
+}));
 app.use(express.json());
 
 const API_KEY = 'xlogsga5-8jha-ch20-l4re-nqd4k9fphxxh';
 const API_URL = 'https://api.trackingmore.com/v4/trackings';
 
-// Healthcheck oder Debug-Route
 app.get('/', (req, res) => res.send('🟢 Proxy läuft'));
 
-// 🔍 Carrier automatisch erkennen
+// Carrier-Erkennung (wird aktuell nicht verwendet, aber bleibt drin)
 app.get('/detect', async (req, res) => {
   const tracking_number = req.query.tnr;
-
-  if (!tracking_number) {
-    return res.status(400).json({ error: 'Trackingnummer fehlt.' });
-  }
+  if (!tracking_number) return res.status(400).json({ error: 'Trackingnummer fehlt.' });
 
   try {
     const response = await axios.post('https://api.trackingmore.com/v4/carriers/detect', {
@@ -38,7 +38,7 @@ app.get('/detect', async (req, res) => {
   }
 });
 
-// 📦 Trackingstatus: GET zuerst, POST als Fallback
+// DHL-Tracking: GET bevorzugt, POST als Fallback
 app.get('/track', async (req, res) => {
   const tracking_number = req.query.tnr;
   const carrier_code = req.query.carrier;
@@ -52,16 +52,18 @@ app.get('/track', async (req, res) => {
     'Content-Type': 'application/json'
   };
 
-  const getUrl = `https://api.trackingmore.com/v4/trackings/${carrier_code}/${tracking_number}`;
-  const postUrl = `https://api.trackingmore.com/v4/trackings`;
+  const getUrl = `${API_URL}/${carrier_code}/${tracking_number}`;
+  const postUrl = API_URL;
 
   try {
-    // 1. Versuche GET
+    // 1. GET versuchen
     const response = await axios.get(getUrl, { headers });
     const status = response.data?.data?.tag || 'Unbekannt';
     return res.json({ status });
   } catch (getError) {
-    // 2. Fallback auf POST
+    console.error('Fehler bei GET:', getError.response?.data || getError.message);
+
+    // 2. Fallback POST
     try {
       const response = await axios.post(postUrl, {
         tracking_number,
@@ -71,13 +73,12 @@ app.get('/track', async (req, res) => {
       const status = response.data?.data?.tag || 'Unbekannt';
       return res.json({ status });
     } catch (postError) {
-      console.error('Tracking fehlgeschlagen:', postError.response?.data || postError.message);
+      console.error('Fehler bei POST:', postError.response?.data || postError.message);
       return res.status(500).json({ error: 'Tracking fehlgeschlagen.' });
     }
   }
 });
 
-// Render erwartet explizit process.env.PORT – kein Fallback!
 const PORT = process.env.PORT;
 app.listen(PORT, () => {
   console.log(`✅ Tracking proxy läuft auf Port ${PORT}`);
