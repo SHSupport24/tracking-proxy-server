@@ -73,7 +73,7 @@ app.get('/track', async (req, res) => {
         return res.status(500).json({ error: 'Tracking konnte nicht angelegt werden.' });
       }
 
-      await new Promise(r => setTimeout(r, 10000)); // verlängert auf 10 Sekunden
+      await new Promise(r => setTimeout(r, 10000)); // 10 Sekunden warten
       status = await getTracking(tracking_number, carrier_code, headers);
     }
 
@@ -100,11 +100,11 @@ app.get('/raw', async (req, res) => {
     const response = await axios.get(`${API_URL}/${carrier_code}/${tracking_number}`, { headers });
     res.json(response.data);
   } catch (err) {
-    if (err.response?.data?.meta) {
-      res.status(500).json({ error: err.response.data.meta });
-    } else {
-      res.status(500).json({ error: err.message });
+    const errData = err.response?.data?.meta;
+    if (errData?.code === 4004) {
+      return res.status(200).json({ status: 'Unbekannt', error: errData });
     }
+    res.status(500).json({ error: errData || err.message });
   }
 });
 
