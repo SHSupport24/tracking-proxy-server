@@ -15,6 +15,38 @@ const API_URL = 'https://api.trackingmore.com/v4/trackings';
 
 app.get('/', (req, res) => res.send('🟢 Proxy läuft'));
 
+// 📦 Tracking manuell registrieren
+app.get('/create', async (req, res) => {
+  const tracking_number = req.query.tnr;
+  const carrier_code = req.query.carrier || 'dhl-germany';
+
+  if (!tracking_number) {
+    return res.status(400).json({ error: 'Trackingnummer fehlt.' });
+  }
+
+  try {
+    const response = await axios.post(API_URL, {
+      tracking_number,
+      carrier_code,
+      title: 'Trello',
+      customer_name: 'Power-Up',
+      order_id: tracking_number,
+      lang: 'de'
+    }, {
+      headers: {
+        'Tracking-Api-Key': API_KEY,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.json({ created: true, response: response.data });
+  } catch (error) {
+    console.error('❌ Fehler bei /create:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Anlegen fehlgeschlagen.' });
+  }
+});
+
+// Carrier erkennen (optional)
 app.get('/detect', async (req, res) => {
   const tracking_number = req.query.tnr;
   if (!tracking_number) return res.status(400).json({ error: 'Trackingnummer fehlt.' });
@@ -37,6 +69,7 @@ app.get('/detect', async (req, res) => {
   }
 });
 
+// Status auslesen mit smarter Fallback-Strategie
 app.get('/track', async (req, res) => {
   const tracking_number = req.query.tnr;
   const carrier_code = req.query.carrier;
@@ -53,7 +86,6 @@ app.get('/track', async (req, res) => {
   const getUrl = `${API_URL}/${carrier_code}/${tracking_number}`;
   const postUrl = API_URL;
 
-  // Erweiterte Status-Erkennung
   function extractStatus(data) {
     const checkpoints = data?.origin_info?.trackinfo;
     const lastCheckpoint = checkpoints?.[checkpoints.length - 1];
@@ -81,7 +113,11 @@ app.get('/track', async (req, res) => {
     try {
       const response = await axios.post(postUrl, {
         tracking_number,
-        carrier_code
+        carrier_code,
+        title: 'Trello Auto',
+        customer_name: 'Board',
+        order_id: tracking_number,
+        lang: 'de'
       }, { headers });
 
       console.log('Antwort POST:', JSON.stringify(response.data, null, 2));
