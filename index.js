@@ -29,6 +29,7 @@ async function registerTracking(tracking_number, carrier_code, headers) {
       }
     }, { headers });
     console.log('✅ Tracking registriert:', res.data);
+    await new Promise(r => setTimeout(r, 3000)); // 3 Sekunden warten nach POST
     return true;
   } catch (err) {
     console.error('❌ POST fehlgeschlagen:', err.response?.data || err.message);
@@ -79,6 +80,23 @@ app.get('/track', async (req, res) => {
 
     return res.json({ status: status || 'Kein Status verfügbar' });
   } catch (err) {
+    // Falls 4004 im Fehler auftritt, versuchen wir POST und nochmal GET
+    const code = err.response?.data?.meta?.code;
+    if (code === 4004) {
+      try {
+        const created = await registerTracking(tracking_number, carrier_code, {
+          'aftership-api-key': API_KEY,
+          'Content-Type': 'application/json'
+        });
+        if (created) {
+          await new Promise(r => setTimeout(r, 10000)); // 10 Sekunden warten
+          const status = await getTracking(tracking_number, carrier_code, headers);
+          return res.json({ status: status || 'Kein Status verfügbar' });
+        }
+      } catch (e) {
+        console.error('❌ Fehler beim erneuten POST/GET nach 4004:', e.message);
+      }
+    }
     console.error('❌ Proxy-Fehler:', err.message);
     return res.status(500).json({ error: 'Proxy-Fehler. Siehe Logs.' });
   }
@@ -102,6 +120,17 @@ app.get('/raw', async (req, res) => {
   } catch (err) {
     const errData = err.response?.data?.meta;
     if (errData?.code === 4004) {
+      // Versuche POST und danach nochmal GET
+      try {
+        const created = await registerTracking(tracking_number, carrier_code, headers);
+        if (created) {
+          await new Promise(r => setTimeout(r, 10000)); // 10 Sekunden warten
+          const responseRetry = await axios.get(`${API_URL}/${carrier_code}/${tracking_number}`, { headers });
+          return res.json(responseRetry.data);
+        }
+      } catch (e) {
+        console.error('❌ Fehler beim POST/GET Retry nach 4004:', e.message);
+      }
       return res.status(200).json({ status: 'Unbekannt', error: errData });
     }
     res.status(500).json({ error: errData || err.message });
