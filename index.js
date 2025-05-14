@@ -38,7 +38,7 @@ app.get('/detect', async (req, res) => {
   }
 });
 
-// 📦 Trackingstatus abfragen
+// 📦 Trackingstatus: GET zuerst, POST als Fallback
 app.get('/track', async (req, res) => {
   const tracking_number = req.query.tnr;
   const carrier_code = req.query.carrier;
@@ -47,26 +47,37 @@ app.get('/track', async (req, res) => {
     return res.status(400).json({ error: 'Trackingnummer oder Carrier fehlt.' });
   }
 
-  try {
-    const response = await axios.post(API_URL, {
-      tracking_number,
-      carrier_code
-    }, {
-      headers: {
-        'Tracking-Api-Key': API_KEY,
-        'Content-Type': 'application/json'
-      }
-    });
+  const headers = {
+    'Tracking-Api-Key': API_KEY,
+    'Content-Type': 'application/json'
+  };
 
+  const getUrl = `https://api.trackingmore.com/v4/trackings/${carrier_code}/${tracking_number}`;
+  const postUrl = `https://api.trackingmore.com/v4/trackings`;
+
+  try {
+    // 1. Versuche GET
+    const response = await axios.get(getUrl, { headers });
     const status = response.data?.data?.tag || 'Unbekannt';
-    res.json({ status });
-  } catch (error) {
-    console.error('Track Fehler:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Tracking fehlgeschlagen.' });
+    return res.json({ status });
+  } catch (getError) {
+    // 2. Fallback auf POST
+    try {
+      const response = await axios.post(postUrl, {
+        tracking_number,
+        carrier_code
+      }, { headers });
+
+      const status = response.data?.data?.tag || 'Unbekannt';
+      return res.json({ status });
+    } catch (postError) {
+      console.error('Tracking fehlgeschlagen:', postError.response?.data || postError.message);
+      return res.status(500).json({ error: 'Tracking fehlgeschlagen.' });
+    }
   }
 });
 
-// ❗ Render verlangt explizit process.env.PORT – ohne Fallback!
+// Render erwartet explizit process.env.PORT – kein Fallback!
 const PORT = process.env.PORT;
 app.listen(PORT, () => {
   console.log(`✅ Tracking proxy läuft auf Port ${PORT}`);
