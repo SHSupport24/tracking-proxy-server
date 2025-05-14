@@ -101,7 +101,11 @@ app.get('/raw', async (req, res) => {
     const response = await axios.get(`${API_URL}/${carrier_code}/${tracking_number}`, { headers });
     res.json(response.data);
   } catch (err) {
-    res.status(500).json({ error: err.response?.data || err.message });
+    if (err.response?.data?.meta) {
+      res.status(500).json({ error: err.response.data.meta });
+    } else {
+      res.status(500).json({ error: err.message });
+    }
   }
 });
 
