@@ -15,15 +15,35 @@ const API_URL = 'https://api.trackingmore.com/v4/trackings';
 
 app.get('/', (req, res) => res.send('🟢 Proxy läuft'));
 
-// 📦 Tracking manuell registrieren
-app.get('/create', async (req, res) => {
-  const tracking_number = req.query.tnr;
-  const carrier_code = req.query.carrier || 'dhl-germany';
+function extractStatus(data) {
+  const checkpoints = data?.origin_info?.trackinfo;
+  const lastCheckpoint = checkpoints?.[checkpoints.length - 1];
 
-  if (!tracking_number) {
-    return res.status(400).json({ error: 'Trackingnummer fehlt.' });
+  return (
+    lastCheckpoint?.StatusDescription ||
+    data?.latest_status?.status ||
+    data?.latest_status ||
+    data?.latest_event ||
+    data?.status_description ||
+    data?.tag ||
+    data?.status ||
+    'Kein Status verfügbar'
+  );
+}
+
+async function getTracking(tracking_number, carrier_code, headers) {
+  const getUrl = `${API_URL}/${carrier_code}/${tracking_number}`;
+  try {
+    const response = await axios.get(getUrl, { headers });
+    console.log('🔄 GET Erfolg:', JSON.stringify(response.data));
+    return extractStatus(response.data.data);
+  } catch (error) {
+    console.warn('❗ GET fehlgeschlagen:', error.response?.data || error.message);
+    return null;
   }
+}
 
+async function createTracking(tracking_number, carrier_code, headers) {
   try {
     const response = await axios.post(API_URL, {
       tracking_number,
@@ -32,44 +52,16 @@ app.get('/create', async (req, res) => {
       customer_name: 'Power-Up',
       order_id: tracking_number,
       lang: 'de'
-    }, {
-      headers: {
-        'Tracking-Api-Key': API_KEY,
-        'Content-Type': 'application/json'
-      }
-    });
+    }, { headers });
 
-    res.json({ created: true, response: response.data });
+    console.log('✅ POST Erfolg:', JSON.stringify(response.data));
+    return true;
   } catch (error) {
-    console.error('❌ Fehler bei /create:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Anlegen fehlgeschlagen.' });
+    console.error('❌ POST Fehler:', error.response?.data || error.message);
+    return false;
   }
-});
+}
 
-// Carrier erkennen (optional)
-app.get('/detect', async (req, res) => {
-  const tracking_number = req.query.tnr;
-  if (!tracking_number) return res.status(400).json({ error: 'Trackingnummer fehlt.' });
-
-  try {
-    const response = await axios.post('https://api.trackingmore.com/v4/carriers/detect', {
-      tracking_number
-    }, {
-      headers: {
-        'Tracking-Api-Key': API_KEY,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const carrier = response.data?.data?.[0]?.code;
-    res.json({ carrier });
-  } catch (error) {
-    console.error('Carrier Detect Fehler:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Carrier-Erkennung fehlgeschlagen.' });
-  }
-});
-
-// Status auslesen mit smarter Fallback-Strategie
 app.get('/track', async (req, res) => {
   const tracking_number = req.query.tnr;
   const carrier_code = req.query.carrier;
@@ -83,51 +75,21 @@ app.get('/track', async (req, res) => {
     'Content-Type': 'application/json'
   };
 
-  const getUrl = `${API_URL}/${carrier_code}/${tracking_number}`;
-  const postUrl = API_URL;
-
-  function extractStatus(data) {
-    const checkpoints = data?.origin_info?.trackinfo;
-    const lastCheckpoint = checkpoints?.[checkpoints.length - 1];
-
-    return (
-      lastCheckpoint?.StatusDescription ||
-      data?.latest_status?.status ||
-      data?.latest_status ||
-      data?.latest_event ||
-      data?.status_description ||
-      data?.tag ||
-      data?.status ||
-      'Kein Status verfügbar'
-    );
-  }
-
-  try {
-    const response = await axios.get(getUrl, { headers });
-    console.log('Antwort GET:', JSON.stringify(response.data, null, 2));
-    const status = extractStatus(response.data.data);
+  // Versuch 1: Direkt abrufen
+  let status = await getTracking(tracking_number, carrier_code, headers);
+  if (status && status !== 'Kein Status verfügbar') {
     return res.json({ status });
-  } catch (getError) {
-    console.error('Fehler bei GET:', getError.response?.data || getError.message);
-
-    try {
-      const response = await axios.post(postUrl, {
-        tracking_number,
-        carrier_code,
-        title: 'Trello Auto',
-        customer_name: 'Board',
-        order_id: tracking_number,
-        lang: 'de'
-      }, { headers });
-
-      console.log('Antwort POST:', JSON.stringify(response.data, null, 2));
-      const status = extractStatus(response.data.data);
-      return res.json({ status });
-    } catch (postError) {
-      console.error('Fehler bei POST:', postError.response?.data || postError.message);
-      return res.status(500).json({ error: 'Tracking fehlgeschlagen.' });
-    }
   }
+
+  // Wenn fehlgeschlagen: anlegen
+  const created = await createTracking(tracking_number, carrier_code, headers);
+  if (!created) {
+    return res.status(500).json({ error: 'Tracking konnte nicht erstellt werden.' });
+  }
+
+  // Versuch 2: Status erneut abrufen
+  status = await getTracking(tracking_number, carrier_code, headers);
+  return res.json({ status: status || 'Kein Status verfügbar' });
 });
 
 const PORT = process.env.PORT;
