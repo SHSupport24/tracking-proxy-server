@@ -15,6 +15,7 @@ const API_URL = 'https://api.trackingmore.com/v4/trackings';
 
 app.get('/', (req, res) => res.send('🟢 Proxy läuft'));
 
+// Carrier-Erkennung bleibt erhalten (optional)
 app.get('/detect', async (req, res) => {
   const tracking_number = req.query.tnr;
   if (!tracking_number) return res.status(400).json({ error: 'Trackingnummer fehlt.' });
@@ -37,6 +38,7 @@ app.get('/detect', async (req, res) => {
   }
 });
 
+// Trackingstatus auslesen mit robuster Logik
 app.get('/track', async (req, res) => {
   const tracking_number = req.query.tnr;
   const carrier_code = req.query.carrier;
@@ -53,14 +55,25 @@ app.get('/track', async (req, res) => {
   const getUrl = `${API_URL}/${carrier_code}/${tracking_number}`;
   const postUrl = API_URL;
 
+  // Robust: alle möglichen Status-Felder abprüfen
+  function extractStatus(data) {
+    const checkpoints = data?.origin_info?.trackinfo;
+    const lastCheckpoint = checkpoints?.[checkpoints.length - 1]?.StatusDescription;
+
+    return (
+      lastCheckpoint ||
+      data?.tag ||
+      data?.status ||
+      data?.status_description ||
+      'Kein Status verfügbar'
+    );
+  }
+
   try {
     const response = await axios.get(getUrl, { headers });
-    console.log('Antwort GET:', response.data);
+    console.log('Antwort GET:', JSON.stringify(response.data, null, 2));
 
-    const checkpoints = response.data?.data?.origin_info?.trackinfo;
-    const lastMessage = checkpoints?.[checkpoints.length - 1]?.StatusDescription;
-
-    const status = lastMessage || response.data?.data?.tag || 'Kein Status verfügbar';
+    const status = extractStatus(response.data.data);
     return res.json({ status });
   } catch (getError) {
     console.error('Fehler bei GET:', getError.response?.data || getError.message);
@@ -71,12 +84,9 @@ app.get('/track', async (req, res) => {
         carrier_code
       }, { headers });
 
-      console.log('Antwort POST:', response.data);
+      console.log('Antwort POST:', JSON.stringify(response.data, null, 2));
 
-      const checkpoints = response.data?.data?.origin_info?.trackinfo;
-      const lastMessage = checkpoints?.[checkpoints.length - 1]?.StatusDescription;
-
-      const status = lastMessage || response.data?.data?.tag || 'Kein Status verfügbar';
+      const status = extractStatus(response.data.data);
       return res.json({ status });
     } catch (postError) {
       console.error('Fehler bei POST:', postError.response?.data || postError.message);
