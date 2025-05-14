@@ -15,7 +15,6 @@ const API_URL = 'https://api.trackingmore.com/v4/trackings';
 
 app.get('/', (req, res) => res.send('🟢 Proxy läuft'));
 
-// Carrier-Erkennung bleibt erhalten (optional)
 app.get('/detect', async (req, res) => {
   const tracking_number = req.query.tnr;
   if (!tracking_number) return res.status(400).json({ error: 'Trackingnummer fehlt.' });
@@ -38,7 +37,6 @@ app.get('/detect', async (req, res) => {
   }
 });
 
-// Trackingstatus auslesen mit robuster Logik
 app.get('/track', async (req, res) => {
   const tracking_number = req.query.tnr;
   const carrier_code = req.query.carrier;
@@ -55,16 +53,19 @@ app.get('/track', async (req, res) => {
   const getUrl = `${API_URL}/${carrier_code}/${tracking_number}`;
   const postUrl = API_URL;
 
-  // Robust: alle möglichen Status-Felder abprüfen
+  // Erweiterte Status-Erkennung
   function extractStatus(data) {
     const checkpoints = data?.origin_info?.trackinfo;
-    const lastCheckpoint = checkpoints?.[checkpoints.length - 1]?.StatusDescription;
+    const lastCheckpoint = checkpoints?.[checkpoints.length - 1];
 
     return (
-      lastCheckpoint ||
+      lastCheckpoint?.StatusDescription ||
+      data?.latest_status?.status ||
+      data?.latest_status ||
+      data?.latest_event ||
+      data?.status_description ||
       data?.tag ||
       data?.status ||
-      data?.status_description ||
       'Kein Status verfügbar'
     );
   }
@@ -72,7 +73,6 @@ app.get('/track', async (req, res) => {
   try {
     const response = await axios.get(getUrl, { headers });
     console.log('Antwort GET:', JSON.stringify(response.data, null, 2));
-
     const status = extractStatus(response.data.data);
     return res.json({ status });
   } catch (getError) {
@@ -85,7 +85,6 @@ app.get('/track', async (req, res) => {
       }, { headers });
 
       console.log('Antwort POST:', JSON.stringify(response.data, null, 2));
-
       const status = extractStatus(response.data.data);
       return res.json({ status });
     } catch (postError) {
